@@ -45,6 +45,7 @@
   .tab.active[data-tab="shape"] { color: #a78bfa; }
   .tab.active[data-tab="particles"] { color: #f472b6; }
   .tab.active[data-tab="magic"] { color: #fbbf24; }
+  .tab.active[data-tab="paint"] { color: #a3e635; }
 
   /* Main area */
   .main {
@@ -116,6 +117,25 @@
   }
   .magic-btn:hover { border-color: #555; color: #ccc; }
   .magic-btn.active { border-color: #fbbf24; color: #fbbf24; background: #2a2010; }
+  .paint-btn {
+    padding: 6px 14px;
+    background: #1a1a1a;
+    border: 1px solid #333;
+    color: #999;
+    font-family: 'Inter', sans-serif;
+    font-size: 13px;
+    border-radius: 6px;
+    cursor: pointer;
+    transition: all 0.2s;
+  }
+  .paint-btn:hover { border-color: #555; color: #ccc; }
+  .paint-btn.active { border-color: #a3e635; color: #a3e635; background: #1a2210; }
+  .color-dot {
+    width: 20px; height: 20px; border-radius: 50%; border: 2px solid #333;
+    cursor: pointer; transition: transform 0.15s;
+  }
+  .color-dot:hover { transform: scale(1.2); }
+  .color-dot.active { border-color: #fff; transform: scale(1.25); }
 
   /* API badge */
   .api-badge {
@@ -141,6 +161,7 @@
   <button class="tab" data-tab="shape">Shape Text Fill</button>
   <button class="tab" data-tab="particles">Typo Particles</button>
   <button class="tab" data-tab="magic">Magic Spell</button>
+  <button class="tab" data-tab="paint">Painterly Text</button>
 </div>
 
 <div class="main">
@@ -178,6 +199,17 @@
     <button class="magic-btn" data-spell="orbit">Orbit</button>
     <button class="magic-btn" data-spell="vortex">Vortex</button>
   </div>
+</div>
+
+<div class="controls hidden" id="controls-paint">
+  <label>TEXT</label>
+  <input type="text" id="paintText" value="봄이 왔다. 풀밭 위에 누워 하늘을 본다. Spring has come, lying on the grass, looking up at the sky.">
+  <label style="margin-left:8px">PALETTE</label>
+  <div class="color-dot active" data-palette="spring" style="background:linear-gradient(135deg,#a3e635,#65a30d)"></div>
+  <div class="color-dot" data-palette="sky" style="background:linear-gradient(135deg,#93c5fd,#bfdbfe)"></div>
+  <div class="color-dot" data-palette="blush" style="background:linear-gradient(135deg,#fda4af,#fecdd3)"></div>
+  <div class="color-dot" data-palette="mixed" style="background:conic-gradient(#a3e635,#93c5fd,#fda4af,#fde68a,#a3e635)"></div>
+  <button class="paint-btn" id="clearPaint" style="margin-left:auto">Clear</button>
 </div>
 
 <script type="importmap">
@@ -229,7 +261,8 @@ const apiTexts = {
   wave: 'prepareWithSegments + layoutWithLines',
   shape: 'prepareWithSegments + layoutNextLine',
   particles: 'prepareWithSegments + layoutWithLines',
-  magic: 'prepareWithSegments + layoutWithLines'
+  magic: 'prepareWithSegments + layoutWithLines',
+  paint: 'prepareWithSegments + layoutNextLine'
 }
 tabs.forEach(tab => {
   tab.addEventListener('click', () => {
@@ -793,6 +826,185 @@ function drawMagic() {
 }
 
 // ════════════════════════════════════════
+//  TAB 5: PAINTERLY TEXT
+// ════════════════════════════════════════
+let paintStrokes = [] // each stroke = array of {x, y, ch, size, color, angle, alpha}
+let currentStroke = null
+let paintCharIndex = 0
+let isPainting = false
+let paintPaletteName = 'spring'
+
+const palettes = {
+  spring: ['#a3e635','#84cc16','#65a30d','#bef264','#d9f99d','#fef08a','#ffffff80'],
+  sky:    ['#93c5fd','#bfdbfe','#dbeafe','#60a5fa','#e0f2fe','#f0f9ff','#ffffff80'],
+  blush:  ['#fda4af','#fecdd3','#ffe4e6','#fb7185','#fce7f3','#ffffff','#f9a8d4'],
+  mixed:  ['#a3e635','#93c5fd','#fda4af','#fde68a','#c084fc','#ffffff80','#86efac'],
+}
+
+function getPaintColor() {
+  const pal = palettes[paintPaletteName]
+  return pal[Math.floor(Math.random() * pal.length)]
+}
+
+function getPaintText() {
+  return document.getElementById('paintText').value || 'Spring'
+}
+
+// Prepare text for painting — we'll pick characters sequentially
+let paintPrepared = null
+let paintTextContent = ''
+
+function buildPaint() {
+  // Draw the canvas background (warm off-white like canvas)
+  paintCanvasBg()
+  paintStrokes = []
+  currentStroke = null
+  paintCharIndex = 0
+  preparePaintText()
+}
+
+function preparePaintText() {
+  paintTextContent = getPaintText()
+  const font = '24px Inter'
+  try { paintPrepared = prepareWithSegments(paintTextContent, font) } catch { paintPrepared = null }
+}
+
+function paintCanvasBg() {
+  // Warm canvas-like background
+  ctx.fillStyle = '#f5f0e8'
+  ctx.fillRect(0, 0, W, H)
+  // Subtle texture
+  for (let i = 0; i < 3000; i++) {
+    const x = Math.random() * W
+    const y = Math.random() * H
+    ctx.fillStyle = `rgba(${180 + Math.random()*40}, ${175 + Math.random()*40}, ${160 + Math.random()*40}, ${Math.random()*0.15})`
+    ctx.fillRect(x, y, Math.random() * 3 + 1, Math.random() * 3 + 1)
+  }
+}
+
+// Mouse handling specific to paint tab
+let paintLastX = 0, paintLastY = 0, paintDist = 0
+
+canvas.addEventListener('mousedown', e => {
+  if (currentTab !== 'paint') return
+  isPainting = true
+  const rect = canvas.getBoundingClientRect()
+  paintLastX = e.clientX - rect.left
+  paintLastY = e.clientY - rect.top
+  paintDist = 0
+  currentStroke = []
+  paintStrokes.push(currentStroke)
+})
+
+canvas.addEventListener('mousemove', e => {
+  if (currentTab !== 'paint' || !isPainting || !currentStroke) return
+  const rect = canvas.getBoundingClientRect()
+  const x = e.clientX - rect.left
+  const y = e.clientY - rect.top
+  const dx = x - paintLastX
+  const dy = y - paintLastY
+  const dist = Math.sqrt(dx * dx + dy * dy)
+  const angle = Math.atan2(dy, dx)
+  const speed = dist
+
+  paintDist += dist
+
+  // Place a character every ~charSpacing pixels along the path
+  const charSpacing = 12
+  if (paintDist >= charSpacing) {
+    const steps = Math.floor(paintDist / charSpacing)
+    for (let s = 0; s < steps; s++) {
+      const t = (s + 1) / steps
+      const px = paintLastX + dx * t
+      const py = paintLastY + dy * t
+
+      const ch = paintTextContent[paintCharIndex % paintTextContent.length]
+      paintCharIndex++
+
+      // Size varies with speed: slow=small+dense, fast=large+thin
+      const size = Math.min(64, Math.max(14, speed * 1.2 + 8))
+      const alpha = Math.max(0.15, Math.min(0.85, 1.2 - speed * 0.015))
+      const color = getPaintColor()
+
+      const mark = { x: px, y: py, ch, size, color, angle, alpha }
+      currentStroke.push(mark)
+
+      // Draw immediately
+      drawPaintMark(mark)
+    }
+    paintDist -= steps * charSpacing
+  }
+
+  paintLastX = x
+  paintLastY = y
+})
+
+canvas.addEventListener('mouseup', () => { isPainting = false; currentStroke = null })
+canvas.addEventListener('mouseleave', () => {
+  if (currentTab === 'paint') { isPainting = false; currentStroke = null }
+})
+
+function drawPaintMark(m) {
+  ctx.save()
+  ctx.globalCompositeOperation = 'multiply'
+  ctx.translate(m.x, m.y)
+  ctx.rotate(m.angle + (Math.random() - 0.5) * 0.3)
+  ctx.font = `${m.size}px Inter`
+  ctx.fillStyle = m.color
+  ctx.globalAlpha = m.alpha
+  ctx.textBaseline = 'middle'
+  ctx.textAlign = 'center'
+  ctx.fillText(m.ch, 0, 0)
+
+  // Soft halo for painterly blending
+  ctx.globalCompositeOperation = 'screen'
+  ctx.globalAlpha = m.alpha * 0.2
+  ctx.font = `${m.size * 1.5}px Inter`
+  ctx.fillText(m.ch, 0, 0)
+
+  ctx.restore()
+}
+
+function redrawAllPaint() {
+  paintCanvasBg()
+  for (const stroke of paintStrokes) {
+    for (const m of stroke) drawPaintMark(m)
+  }
+}
+
+function drawPaint() {
+  // Paint tab is not animated frame-by-frame — it's drawn on interaction
+  // But we need to show hint when empty
+  if (paintStrokes.length === 0 && !isPainting) {
+    // Hint
+    ctx.fillStyle = 'rgba(0,0,0,0.15)'
+    ctx.font = '16px Inter'
+    ctx.textAlign = 'center'
+    ctx.textBaseline = 'middle'
+    ctx.fillText('Drag to paint with text', W / 2, H / 2)
+    ctx.font = '13px Inter'
+    ctx.fillText('글자가 붓터치가 됩니다', W / 2, H / 2 + 28)
+    ctx.textAlign = 'start'
+  }
+}
+
+document.getElementById('paintText').addEventListener('input', preparePaintText)
+
+document.querySelectorAll('.color-dot').forEach(dot => {
+  dot.addEventListener('click', () => {
+    document.querySelectorAll('.color-dot').forEach(d => d.classList.remove('active'))
+    dot.classList.add('active')
+    paintPaletteName = dot.dataset.palette
+  })
+})
+
+document.getElementById('clearPaint').addEventListener('click', () => {
+  paintStrokes = []
+  paintCharIndex = 0
+  buildPaint()
+})
+
+// ════════════════════════════════════════
 //  MAIN LOOP
 // ════════════════════════════════════════
 function rebuildCurrentTab() {
@@ -800,6 +1012,7 @@ function rebuildCurrentTab() {
   else if (currentTab === 'shape') buildShape()
   else if (currentTab === 'particles') buildParticles()
   else if (currentTab === 'magic') buildMagic()
+  else if (currentTab === 'paint') buildPaint()
 }
 
 function frame() {
@@ -807,6 +1020,7 @@ function frame() {
   else if (currentTab === 'shape') drawShape()
   else if (currentTab === 'particles') drawParticles()
   else if (currentTab === 'magic') drawMagic()
+  else if (currentTab === 'paint') drawPaint()
   requestAnimationFrame(frame)
 }
 
