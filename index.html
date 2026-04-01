@@ -26,7 +26,11 @@
     padding: 16px 24px 0;
     background: #0a0a0a;
     flex-shrink: 0;
+    overflow-x: auto;
+    -webkit-overflow-scrolling: touch;
+    scrollbar-width: none;
   }
+  .tab-bar::-webkit-scrollbar { display: none; }
   .tab {
     padding: 10px 24px;
     border: none;
@@ -38,6 +42,8 @@
     cursor: pointer;
     border-radius: 8px 8px 0 0;
     transition: all 0.2s;
+    white-space: nowrap;
+    flex-shrink: 0;
   }
   .tab:hover { color: #999; background: #222; }
   .tab.active { color: #fff; background: #161616; }
@@ -46,6 +52,7 @@
   .tab.active[data-tab="particles"] { color: #f472b6; }
   .tab.active[data-tab="magic"] { color: #fbbf24; }
   .tab.active[data-tab="paint"] { color: #a3e635; }
+  .tab.active[data-tab="grid"] { color: #ef4444; }
 
   /* Main area */
   .main {
@@ -60,6 +67,7 @@
     display: block;
     width: 100%;
     height: 100%;
+    touch-action: none;
   }
 
   /* Controls */
@@ -83,6 +91,7 @@
     outline: none;
   }
   .controls input[type="text"]:focus { border-color: #555; }
+  .controls input[type="text"] { min-width: 0; }
   .controls label {
     font-size: 12px;
     color: #666;
@@ -151,6 +160,15 @@
     pointer-events: none;
   }
 
+  @media (max-width: 600px) {
+    .tab-bar { padding: 8px 8px 0; }
+    .tab { font-size: 11px; padding: 8px 12px; }
+    .main { margin: 0 8px; }
+    .controls { padding: 8px 12px; gap: 8px; flex-wrap: wrap; }
+    .controls label { font-size: 11px; }
+    .controls input[type="text"] { font-size: 13px; padding: 6px 10px; }
+    .api-badge { font-size: 9px; top: 6px; right: 8px; }
+  }
   .hidden { display: none !important; }
 </style>
 </head>
@@ -162,6 +180,7 @@
   <button class="tab" data-tab="particles">Typo Particles</button>
   <button class="tab" data-tab="magic">Magic Spell</button>
   <button class="tab" data-tab="paint">Painterly Text</button>
+  <button class="tab" data-tab="grid">Swiss Grid</button>
 </div>
 
 <div class="main">
@@ -212,6 +231,16 @@
   <button class="paint-btn" id="clearPaint" style="margin-left:auto">Clear</button>
 </div>
 
+<div class="controls hidden" id="controls-grid">
+  <label>TEXT</label>
+  <input type="text" id="gridText" value="Typography is the art and technique of arranging type. 타이포그래피는 활자를 배열하는 기술이자 예술입니다.">
+  <label>COLS</label>
+  <input type="range" id="gridCols" min="3" max="8" value="5" style="width:80px;accent-color:#ef4444">
+  <label>ROWS</label>
+  <input type="range" id="gridRows" min="3" max="6" value="4" style="width:80px;accent-color:#ef4444">
+  <button class="paint-btn" id="shuffleGrid" style="border-color:#ef4444;color:#ef4444">Shuffle</button>
+</div>
+
 <script type="importmap">
 {
   "imports": {
@@ -254,6 +283,23 @@ canvas.addEventListener('mousemove', e => {
 canvas.addEventListener('mouseenter', () => { mouseInCanvas = true })
 canvas.addEventListener('mouseleave', () => { mouseInCanvas = false; mouseX = -1000; mouseY = -1000 })
 
+// Touch support (global)
+canvas.addEventListener('touchstart', e => {
+  const touch = e.touches[0]
+  const rect = canvas.getBoundingClientRect()
+  mouseX = touch.clientX - rect.left
+  mouseY = touch.clientY - rect.top
+  mouseInCanvas = true
+}, { passive: true })
+canvas.addEventListener('touchmove', e => {
+  e.preventDefault()
+  const touch = e.touches[0]
+  const rect = canvas.getBoundingClientRect()
+  mouseX = touch.clientX - rect.left
+  mouseY = touch.clientY - rect.top
+}, { passive: false })
+canvas.addEventListener('touchend', () => { mouseInCanvas = false; mouseX = -1000; mouseY = -1000 })
+
 // ── Tabs ──
 const tabs = document.querySelectorAll('.tab')
 const apiBadge = document.getElementById('apiBadge')
@@ -262,7 +308,8 @@ const apiTexts = {
   shape: 'prepareWithSegments + layoutNextLine',
   particles: 'prepareWithSegments + layoutWithLines',
   magic: 'prepareWithSegments + layoutWithLines',
-  paint: 'prepareWithSegments + layoutNextLine'
+  paint: 'prepareWithSegments + layoutNextLine',
+  grid: 'prepareWithSegments + layoutNextLine'
 }
 tabs.forEach(tab => {
   tab.addEventListener('click', () => {
@@ -882,67 +929,67 @@ function paintCanvasBg() {
   }
 }
 
-// Mouse handling specific to paint tab
+// Paint input handling — shared by mouse and touch
 let paintLastX = 0, paintLastY = 0, paintDist = 0
 
-canvas.addEventListener('mousedown', e => {
+function startPaint(x, y) {
   if (currentTab !== 'paint') return
   isPainting = true
-  const rect = canvas.getBoundingClientRect()
-  paintLastX = e.clientX - rect.left
-  paintLastY = e.clientY - rect.top
-  paintDist = 0
+  paintLastX = x; paintLastY = y; paintDist = 0
   currentStroke = []
   paintStrokes.push(currentStroke)
-})
+}
 
-canvas.addEventListener('mousemove', e => {
+function movePaint(x, y) {
   if (currentTab !== 'paint' || !isPainting || !currentStroke) return
-  const rect = canvas.getBoundingClientRect()
-  const x = e.clientX - rect.left
-  const y = e.clientY - rect.top
-  const dx = x - paintLastX
-  const dy = y - paintLastY
+  const dx = x - paintLastX, dy = y - paintLastY
   const dist = Math.sqrt(dx * dx + dy * dy)
   const angle = Math.atan2(dy, dx)
-  const speed = dist
-
   paintDist += dist
-
-  // Place a character every ~charSpacing pixels along the path
   const charSpacing = 12
   if (paintDist >= charSpacing) {
     const steps = Math.floor(paintDist / charSpacing)
     for (let s = 0; s < steps; s++) {
       const t = (s + 1) / steps
-      const px = paintLastX + dx * t
-      const py = paintLastY + dy * t
-
+      const px = paintLastX + dx * t, py = paintLastY + dy * t
       const ch = paintTextContent[paintCharIndex % paintTextContent.length]
       paintCharIndex++
-
-      // Size varies with speed: slow=small+dense, fast=large+thin
-      const size = Math.min(64, Math.max(14, speed * 1.2 + 8))
-      const alpha = Math.max(0.15, Math.min(0.85, 1.2 - speed * 0.015))
-      const color = getPaintColor()
-
-      const mark = { x: px, y: py, ch, size, color, angle, alpha }
+      const size = Math.min(64, Math.max(14, dist * 1.2 + 8))
+      const alpha = Math.max(0.15, Math.min(0.85, 1.2 - dist * 0.015))
+      const mark = { x: px, y: py, ch, size, color: getPaintColor(), angle, alpha }
       currentStroke.push(mark)
-
-      // Draw immediately
       drawPaintMark(mark)
     }
     paintDist -= steps * charSpacing
   }
+  paintLastX = x; paintLastY = y
+}
 
-  paintLastX = x
-  paintLastY = y
-})
+function endPaint() { isPainting = false; currentStroke = null }
 
-canvas.addEventListener('mouseup', () => { isPainting = false; currentStroke = null })
-canvas.addEventListener('mouseleave', () => {
-  if (currentTab === 'paint') { isPainting = false; currentStroke = null }
+// Mouse handlers
+canvas.addEventListener('mousedown', e => {
+  const rect = canvas.getBoundingClientRect()
+  startPaint(e.clientX - rect.left, e.clientY - rect.top)
 })
+canvas.addEventListener('mousemove', e => {
+  const rect = canvas.getBoundingClientRect()
+  movePaint(e.clientX - rect.left, e.clientY - rect.top)
+})
+canvas.addEventListener('mouseup', endPaint)
+canvas.addEventListener('mouseleave', () => { if (currentTab === 'paint') endPaint() })
+
+// Touch handlers for paint
+canvas.addEventListener('touchstart', e => {
+  const touch = e.touches[0], rect = canvas.getBoundingClientRect()
+  startPaint(touch.clientX - rect.left, touch.clientY - rect.top)
+}, { passive: true })
+canvas.addEventListener('touchmove', e => {
+  if (currentTab === 'paint' && isPainting) e.preventDefault()
+  const touch = e.touches[0], rect = canvas.getBoundingClientRect()
+  movePaint(touch.clientX - rect.left, touch.clientY - rect.top)
+}, { passive: false })
+canvas.addEventListener('touchend', endPaint)
 
 function drawPaintMark(m) {
   ctx.save()
@@ -1005,6 +1052,182 @@ document.getElementById('clearPaint').addEventListener('click', () => {
 })
 
 // ════════════════════════════════════════
+//  TAB 6: SWISS GRID COMPOSER
+// ════════════════════════════════════════
+let gridCols = 5, gridRows = 4
+let gridCells = []
+let gridTextContent = ''
+const gridPad = 20 // outer padding
+
+function buildGridCells() {
+  gridTextContent = document.getElementById('gridText').value || 'Typography'
+  const occupied = Array.from({ length: gridRows }, () => Array(gridCols).fill(false))
+  gridCells = []
+
+  for (let r = 0; r < gridRows; r++) {
+    for (let c = 0; c < gridCols; c++) {
+      if (occupied[r][c]) continue
+
+      // Random span assignment
+      let colSpan = 1, rowSpan = 1
+      const rand = Math.random()
+      if (rand < 0.12 && c + 1 < gridCols && r + 1 < gridRows &&
+          !occupied[r][c+1] && !occupied[r+1][c] && !occupied[r+1][c+1]) {
+        colSpan = 2; rowSpan = 2
+      } else if (rand < 0.25 && c + 1 < gridCols && !occupied[r][c+1]) {
+        colSpan = 2
+      } else if (rand < 0.35 && r + 1 < gridRows && !occupied[r+1][c]) {
+        rowSpan = 2
+      }
+
+      // Mark occupied
+      for (let dr = 0; dr < rowSpan; dr++)
+        for (let dc = 0; dc < colSpan; dc++)
+          occupied[r + dr][c + dc] = true
+
+      // Random accent (roughly 10% of cells)
+      const isAccent = Math.random() < 0.1
+
+      // Text offset so adjacent cells don't start at same word
+      const textOffset = Math.floor(Math.random() * gridTextContent.length)
+
+      gridCells.push({ col: c, row: r, colSpan, rowSpan, isAccent, textOffset })
+    }
+  }
+}
+
+function getGridCellRect(cell) {
+  const usableW = W - gridPad * 2
+  const usableH = H - gridPad * 2
+  const cellW = usableW / gridCols
+  const cellH = usableH / gridRows
+  return {
+    x: gridPad + cell.col * cellW,
+    y: gridPad + cell.row * cellH,
+    w: cell.colSpan * cellW,
+    h: cell.rowSpan * cellH
+  }
+}
+
+function drawGrid() {
+  ctx.clearRect(0, 0, W, H)
+  // White background
+  ctx.fillStyle = '#ffffff'
+  ctx.fillRect(0, 0, W, H)
+
+  const usableW = W - gridPad * 2
+  const usableH = H - gridPad * 2
+
+  for (const cell of gridCells) {
+    const r = getGridCellRect(cell)
+    const pad = 10
+    const span = cell.colSpan * cell.rowSpan
+
+    // Background
+    if (cell.isAccent) {
+      ctx.fillStyle = '#ef4444'
+      ctx.fillRect(r.x, r.y, r.w, r.h)
+    }
+
+    // Font size based on cell span
+    let fontSize
+    if (span >= 4) fontSize = Math.min(42, r.w / 8)
+    else if (span >= 2) fontSize = Math.min(24, r.w / 10)
+    else fontSize = Math.min(14, r.w / 8)
+    fontSize = Math.max(10, fontSize)
+
+    const fontWeight = span >= 2 ? '700' : '400'
+    const font = `${fontWeight} ${fontSize}px Inter`
+    const lineHeight = fontSize * 1.35
+
+    // Text color
+    ctx.fillStyle = cell.isAccent ? '#ffffff' : '#111111'
+    ctx.font = font
+    ctx.textBaseline = 'top'
+    ctx.textAlign = 'start'
+
+    // Use pretext to lay out text inside cell
+    const maxW = r.w - pad * 2
+    if (maxW < 10) continue
+
+    // Build text starting from offset
+    const offset = cell.textOffset
+    const text = gridTextContent.slice(offset) + ' ' + gridTextContent.slice(0, offset)
+
+    let prepared
+    try { prepared = prepareWithSegments(text, font) } catch { continue }
+
+    let cursor = { segmentIndex: 0, graphemeIndex: 0 }
+    let y = r.y + pad
+    const maxY = r.y + r.h - pad
+
+    while (y + lineHeight <= maxY) {
+      const line = layoutNextLine(prepared, cursor, maxW)
+      if (line === null) break
+      ctx.fillText(line.text, r.x + pad, y)
+      cursor = line.end
+      y += lineHeight
+    }
+
+    // Cell border
+    ctx.strokeStyle = '#000000'
+    ctx.lineWidth = 1
+    ctx.strokeRect(r.x, r.y, r.w, r.h)
+  }
+
+  // Outer border (thicker)
+  ctx.strokeStyle = '#000000'
+  ctx.lineWidth = 2
+  ctx.strokeRect(gridPad, gridPad, usableW, usableH)
+}
+
+function buildGrid() {
+  gridCols = +document.getElementById('gridCols').value
+  gridRows = +document.getElementById('gridRows').value
+  buildGridCells()
+}
+
+// Grid interactions
+canvas.addEventListener('click', e => {
+  if (currentTab !== 'grid') return
+  const rect = canvas.getBoundingClientRect()
+  const cx = e.clientX - rect.left
+  const cy = e.clientY - rect.top
+  // Find clicked cell
+  for (const cell of gridCells) {
+    const r = getGridCellRect(cell)
+    if (cx >= r.x && cx <= r.x + r.w && cy >= r.y && cy <= r.y + r.h) {
+      // Toggle accent on click
+      cell.isAccent = !cell.isAccent
+      break
+    }
+  }
+})
+
+// Touch tap for grid cells
+canvas.addEventListener('touchstart', e => {
+  if (currentTab !== 'grid') return
+  const touch = e.touches[0]
+  const rect = canvas.getBoundingClientRect()
+  const cx = touch.clientX - rect.left
+  const cy = touch.clientY - rect.top
+  for (const cell of gridCells) {
+    const r = getGridCellRect(cell)
+    if (cx >= r.x && cx <= r.x + r.w && cy >= r.y && cy <= r.y + r.h) {
+      cell.isAccent = !cell.isAccent
+      break
+    }
+  }
+}, { passive: true })
+
+document.getElementById('shuffleGrid').addEventListener('click', buildGrid)
+document.getElementById('gridCols').addEventListener('input', buildGrid)
+document.getElementById('gridRows').addEventListener('input', buildGrid)
+document.getElementById('gridText').addEventListener('input', () => {
+  gridTextContent = document.getElementById('gridText').value || 'Typography'
+})
+
+// ════════════════════════════════════════
 //  MAIN LOOP
 // ════════════════════════════════════════
 function rebuildCurrentTab() {
@@ -1013,6 +1236,7 @@ function rebuildCurrentTab() {
   else if (currentTab === 'particles') buildParticles()
   else if (currentTab === 'magic') buildMagic()
   else if (currentTab === 'paint') buildPaint()
+  else if (currentTab === 'grid') buildGrid()
 }
 
 function frame() {
@@ -1021,6 +1245,7 @@ function frame() {
   else if (currentTab === 'particles') drawParticles()
   else if (currentTab === 'magic') drawMagic()
   else if (currentTab === 'paint') drawPaint()
+  else if (currentTab === 'grid') drawGrid()
   requestAnimationFrame(frame)
 }
 
